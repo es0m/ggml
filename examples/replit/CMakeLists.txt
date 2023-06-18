@@ -1,6 +1,8 @@
 #
 # replit
 
+if ( NOT MSVC )
+
 set(TEST_TARGET replit)
 add_executable(${TEST_TARGET} main.cpp)
 target_link_libraries(${TEST_TARGET} PRIVATE ggml common common-ggml)
@@ -11,3 +13,5 @@ target_link_libraries(${TEST_TARGET} PRIVATE ggml common common-ggml)
 set(TEST_TARGET replit-quantize)
 add_executable(${TEST_TARGET} quantize.cpp)
 target_link_libraries(${TEST_TARGET} PRIVATE ggml common common-ggml)
+
+endif ()

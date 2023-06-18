@@ -128,6 +128,7 @@ endif()
 
 #
 # test-vec0
+if (NOT MSVC)
 
 set(TEST_TARGET test-vec0)
 add_executable(${TEST_TARGET} ${TEST_TARGET}.c)
@@ -153,6 +154,7 @@ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
     target_link_libraries(${TEST_TARGET} PRIVATE ggml)
     add_test(NAME ${TEST_TARGET} COMMAND $<TARGET_FILE:${TEST_TARGET}>)
 endif()
+
 
 #
 # test-grad0
@@ -258,3 +260,4 @@ elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86" AND GGML_OPENBLAS)
     add_test(NAME ${TEST_TARGET} COMMAND $<TARGET_FILE:${TEST_TARGET}>)
 endif()
 
+endif()

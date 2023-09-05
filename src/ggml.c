@@ -262,17 +262,19 @@ inline static void* ggml_aligned_malloc(size_t size) {
 // floating point type used to accumulate sums
 typedef double ggml_float;
 
-// 16-bit float
-// on Arm, we use __fp16
-// on x86, we use uint16_t
-#ifdef __ARM_NEON
 
+#ifdef __ARM_NEON
 // if YCM cannot find <arm_neon.h>, make a symbolic link to it, for example:
 //
 //   $ ln -sfn /Library/Developer/CommandLineTools/usr/lib/clang/13.1.6/include/arm_neon.h ./src/
 //
 #include <arm_neon.h>
+#endif
 
+// 16-bit float
+// on Arm and not MSVC, we use __fp16
+// on ARM MSVC and x86, we use uint16_t
+#if defined(__ARM_NEON) && !defined(_MSC_VER)
 #define GGML_COMPUTE_FP16_TO_FP32(x) ((float) (x))
 #define GGML_COMPUTE_FP32_TO_FP16(x) (x)
 

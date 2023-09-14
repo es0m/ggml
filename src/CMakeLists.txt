@@ -50,10 +50,18 @@ if (UNAME_S MATCHES "Darwin")
     endif()
 endif()
 
-if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm" OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+if ((${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm") OR (${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64") OR ("${CMAKE_GENERATOR_PLATFORM_LWR}" MATCHES "arm64"))
     message(STATUS "ARM detected")
+  if (MSVC)
+    add_compile_definitions(__ARM_NEON)
+    add_compile_definitions(__ARM_FEATURE_FMA)
+    add_compile_definitions(__ARM_FEATURE_DOTPROD)
+    # add_compile_definitions(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) # MSVC doesn't support vdupq_n_f16, vld1q_f16, vst1q_f16
+    add_compile_definitions(__aarch64__) # MSVC defines _M_ARM64 instead        
+  else()
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=apple-m1")
-elseif(!MSVC)
+  endif()
+else () 
     message(STATUS "x86 detected")
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx -mavx2 -mfma -mf16c")
     if (UNAME_S MATCHES "Darwin")
@@ -109,6 +117,8 @@ elseif(!MSVC)
         if (F16C_M MATCHES "f16c")
             set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mf16c")
         endif()
+    elseif(MSVC) 
+      add_compile_options(/arch:AVX2)
     else()
         set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -mfma -mf16c -mavx -mavx2")
     endif()
@@ -118,13 +128,6 @@ endif()
 # ggml
 
 set(TARGET ggml)
-
-if (MSVC)
-    #add_compile_options(/arch:AVX2)
-    add_compile_definitions(__ARM_NEON)
-    add_compile_definitions(__ARM_FEATURE_FMA)
-    add_compile_definitions(__aarch64__) # MSVC _M_ARM64
-endif()
 
 # on APPLE - include Accelerate framework
 if (APPLE AND NOT GGML_NO_ACCELERATE)

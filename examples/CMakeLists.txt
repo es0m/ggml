@@ -25,6 +25,7 @@ if (MSVC AND ("${CMAKE_GENERATOR_PLATFORM_LWR}" MATCHES "arm64"))
     add_compile_definitions(__aarch64__) # MSVC _M_ARM64
 endif()
 
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../tnlg ${CMAKE_CURRENT_BINARY_DIR}/tnlg)
 add_subdirectory(gpt-2)
 add_subdirectory(gpt-j)
 add_subdirectory(whisper)

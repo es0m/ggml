@@ -694,7 +694,7 @@ std::string execute_prompt(
         int64_t t_sample_us,
         int64_t t_predict_us,
         size_t mem_per_token,
-        int n_past,
+        int& n_past,
         bool stream_response_to_cout = false) {
     std::string output = "";
     std::vector<float> logits;

@@ -276,9 +276,10 @@
 extern "C" {
 #endif
 
-#if defined(__ARM_NEON) && defined(__CUDACC__)
+#if defined(__ARM_NEON) && defined(__CUDACC__) && !defined(_MSC_VER)
     typedef half ggml_fp16_t;
-#elif defined(__ARM_NEON)
+#elif defined(__ARM_NEON) && !defined(_MSC_VER)
+    // we use the built-in 16-bit float type
     typedef __fp16 ggml_fp16_t;
 #else
     typedef uint16_t ggml_fp16_t;

@@ -18,6 +18,13 @@ add_library(common-ggml STATIC common-ggml.cpp)
 target_link_libraries(common-ggml PRIVATE ggml)
 target_include_directories(common-ggml PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+if (MSVC AND ("${CMAKE_GENERATOR_PLATFORM_LWR}" MATCHES "arm64"))
+    # x86 add_compile_options(/arch:AVX2)
+    add_compile_definitions(__ARM_NEON)
+    add_compile_definitions(__ARM_FEATURE_FMA)
+    add_compile_definitions(__aarch64__) # MSVC _M_ARM64
+endif()
+
 add_subdirectory(gpt-2)
 add_subdirectory(gpt-j)
 add_subdirectory(whisper)

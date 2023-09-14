@@ -14,6 +14,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER)
+#pragma warning(disable: 4244 4267) // possible loss of data
+#endif
+
 // no defaults for now
 struct mpt_hparams {
     int32_t d_model      = 0;
@@ -184,7 +188,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
     {
         uint32_t magic;
         fin.read((char *)&magic, sizeof(magic));
-        if (magic != 0x67676d6c) {
+        if (magic != GGML_FILE_MAGIC) {
             fprintf(stderr, "%s: invalid model file '%s' (bad magic)\n", __func__, fname.c_str());
             return false;
         }
@@ -239,7 +243,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
             // Convert token from utf-8
             std::wstring word_multibytes = convert_to_wstring(word);
             word.resize(word_multibytes.size());
-            for (int w = 0; w < word_multibytes.size(); w++) {
+            for (size_t w = 0; w < word_multibytes.size(); w++) {
                 word[w] = uint8_t(word_multibytes[w]);
             }
 
@@ -388,14 +392,14 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
             std::string name(length, 0);
             fin.read(&name[0], length);
 
-            if (model.tensors.find(name.data()) == model.tensors.end()) {
-                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.data());
+            if (model.tensors.find(name) == model.tensors.end()) {
+                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.c_str());
                 return false;
             }
 
-            auto tensor = model.tensors[name.data()];
+            auto tensor = model.tensors[name];
             if (ggml_nelements(tensor) != nelements) {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
+                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.c_str());
                 return false;
             }
 
@@ -403,13 +407,13 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
                 fprintf(stderr,
                         "%s: tensor '%s' has wrong shape in model file: got [%5d, "
                         "%5d], expected [%5d, %5d]\n",
-                        __func__, name.data(), (int)tensor->ne[0], (int)tensor->ne[1], ne[0], ne[1]);
+                        __func__, name.c_str(), (int)tensor->ne[0], (int)tensor->ne[1], ne[0], ne[1]);
                 return false;
             }
 
             // for debugging
             if (0) {
-                printf("%24s - [%5d, %5d], type = %6s, %6.2f MB, %9zu bytes\n", name.data(), ne[0], ne[1],
+                printf("%24s - [%5d, %5d], type = %6s, %6.2f MB, %9zu bytes\n", name.c_str(), ne[0], ne[1],
                        ggml_type_name(ggml_type(ttype)), ggml_nbytes(tensor) / 1024.0 / 1024.0, ggml_nbytes(tensor));
             }
 
@@ -419,7 +423,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
                 fprintf(stderr,
                         "%s: tensor '%s' has wrong size in model file: got %zu, "
                         "expected %zu\n",
-                        __func__, name.data(), ggml_nbytes(tensor), nelements * bpe);
+                        __func__, name.c_str(), ggml_nbytes(tensor), nelements * bpe);
                 return false;
             }
 
@@ -461,6 +465,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
     const int n_head  = hparams.n_heads;
     const int n_vocab = hparams.n_vocab;
     const int n_ctx   = hparams.n_ctx;
+    const float eps   = 1e-5f;
 
     static size_t buf_size = 256u * 1024 * 1024;
     static void * buf = malloc(buf_size);
@@ -495,7 +500,6 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph gf = {};
-    gf.n_threads = n_threads;
 
     struct ggml_tensor * embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
     memcpy(embd->data, embd_inp.data(), N * ggml_element_size(embd));
@@ -510,7 +514,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
         // a = self.ln_1(x)
         {
-            cur = ggml_norm(ctx0, inpL);
+            cur = ggml_norm(ctx0, inpL, eps);
 
             cur = ggml_mul(ctx0, ggml_repeat(ctx0, model.layers[il].norm_1_weight, cur), cur);
         }
@@ -606,7 +610,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
         // m = self.ln_2(x)
         {
-            cur = ggml_norm(ctx0, inpL);
+            cur = ggml_norm(ctx0, inpL, eps);
 
             cur = ggml_mul(ctx0, ggml_repeat(ctx0, model.layers[il].norm_2_weight, cur), cur);
         }
@@ -632,7 +636,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
     // norm
     {
-        inpL = ggml_norm(ctx0, inpL);
+        inpL = ggml_norm(ctx0, inpL, eps);
         // inpL = ln_f_g*inpL
         inpL = ggml_mul(ctx0, ggml_repeat(ctx0, model.norm_f_weight, inpL), inpL);
     }
@@ -647,7 +651,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
     // run the computation
     ggml_build_forward_expand(&gf, inpL);
-    ggml_graph_compute(ctx0, &gf);
+    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
 
     // std::cout << "Qcur" << std::endl;
     // print_tensor(Qcur);
@@ -932,7 +936,7 @@ int main(int argc, char ** argv) {
     printf("%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
 
     for (size_t i = 0; i < embd_inp.size(); i++) {
-        printf("%s: token[%lu] = %6d\n", __func__, i, embd_inp[i]);
+        printf("%s: token[%zu] = %6d\n", __func__, i, embd_inp[i]);
     }
     printf("\n");
 

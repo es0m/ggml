@@ -1,17 +1,7 @@
 if (GGML_ALL_WARNINGS)
-    if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
-        #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
-            -Wall                           \
-            -Wextra                         \
-            -Wpedantic                      \
-            -Wshadow                        \
-            -Wcast-qual                     \
-            -Wstrict-prototypes             \
-            -Wpointer-arith                 \
-            -Wdouble-promotion              \
-            -Wno-unused-function            \
-        ")
+    if (NOT MSVC)
+        add_compile_options(-Wunused -Wextra -Wcast-qual -Wdouble-promotion)
+        add_compile_options("$<$<COMPILE_LANGUAGE:C>:-Wshadow;-Wno-unused-function;-Wmissing-prototypes>")
     else()
         # todo : windows
     endif()
@@ -20,7 +10,6 @@ endif()
 # compiler flags
 
 if (NOT MSVC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=vla")
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-math-errno -ffinite-math-only -funsafe-math-optimizations")
 endif()
 
@@ -50,9 +39,14 @@ if (UNAME_S MATCHES "Darwin")
     endif()
 endif()
 
-if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm" OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Emscripten")
+    message(STATUS "Emscripten detected")
+elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm" OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
     message(STATUS "ARM detected")
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=apple-m1")
+elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "ppc64le" OR ${CMAKE_SYSTEM_PROCESSOR} MATCHES "ppc64")
+    message(STATUS "PPC64 detected")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mpower9-vector")
 else()
     message(STATUS "x86 detected")
     #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx -mavx2 -mfma -mf16c")
@@ -109,11 +103,28 @@ else()
         if (F16C_M MATCHES "f16c")
             set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mf16c")
         endif()
+    elseif (MSVC)
+        if (GGML_AVX512)
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /arch:AVX512")
+            # MSVC has no compile-time flags enabling specific
+            # AVX512 extensions, neither it defines the
+            # macros corresponding to the extensions.
+            # Do it manually.
+            if (GGML_AVX512_VBMI)
+                add_compile_definitions(__AVX512VBMI__)
+            endif()
+            if (GGML_AVX512_VNNI)
+                add_compile_definitions(__AVX512VNNI__)
+            endif()
+        elseif (GGML_AVX2)
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /arch:AVX2")
+        elseif (GGML_AVX)
+            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /arch:AVX")
+        endif()
     else()
         set(CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -mfma -mf16c -mavx -mavx2")
     endif()
 endif()
-
 
 # ggml
 
@@ -164,19 +175,24 @@ if (GGML_CLBLAST)
 	    $ENV{CLBLAST_HOME}
 	    $ENV{CLBLAST_HOME}/include
         )
-	find_path(CLBLAST_INC NAMES cblast.h PATHS ${CLBLAST_INCLUDE_SEARCH_PATHS})
+	find_path(CLBLAST_INC NAMES clblast.h PATHS ${CLBLAST_INCLUDE_SEARCH_PATHS})
 	find_library(CLBLAST_LIB NAMES clblast)
-	if (CLBLAST_LIB)
+	if (CLBLAST_LIB AND CLBLAST_INC)
 		message(STATUS "clBLAST found")
 
+
+		set(GGML_EXTRA_INCS  ${GGML_EXTRA_INCS}  ${CLBLAST_INC})
 		set(GGML_EXTRA_LIBS  ${GGML_EXTRA_LIBS}  ${CLBLAST_LIB})
-		set(GGML_OPENCL_SOURCES ggml-opencl.c ggml-opencl.h)
 		set(GGML_EXTRA_FLAGS ${GGML_EXTRA_FLAGS} -DGGML_USE_CLBLAST)
+
+		set(GGML_OPENCL_SOURCES ggml-opencl.cpp ggml-opencl.h)
+
 		link_libraries("-Wl,--copy-dt-needed-entries")
     else()
         message(WARNING "clBLAST not found")
     endif()
 endif()
+
 if (GGML_CUBLAS)
     cmake_minimum_required(VERSION 3.17)
 
@@ -201,6 +217,30 @@ if (GGML_CUBLAS)
     endif()
 endif()
 
+if (GGML_METAL)
+    find_library(FOUNDATION_LIBRARY         Foundation              REQUIRED)
+    find_library(METAL_FRAMEWORK            Metal                   REQUIRED)
+    find_library(METALKIT_FRAMEWORK         MetalKit                REQUIRED)
+    find_library(METALPERFORMANCE_FRAMEWORK MetalPerformanceShaders REQUIRED)
+
+    set(GGML_METAL_SOURCES ggml-metal.m ggml-metal.h)
+
+    add_compile_definitions(GGML_USE_METAL)
+    add_compile_definitions(GGML_METAL_NDEBUG)
+
+    # get full path to the file
+    #add_compile_definitions(GGML_METAL_DIR_KERNELS="${CMAKE_CURRENT_SOURCE_DIR}/")
+
+    # copy ggml-metal.metal to bin directory
+    configure_file(ggml-metal.metal ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ggml-metal.metal COPYONLY)
+
+    set(GGML_EXTRA_LIBS ${GGML_EXTRA_LIBS}
+        ${FOUNDATION_LIBRARY}
+        ${METAL_FRAMEWORK}
+        ${METALKIT_FRAMEWORK}
+        ${METALPERFORMANCE_FRAMEWORK}
+        )
+endif()
 
 if (GGML_PERF)
     set(GGML_EXTRA_FLAGS ${GGML_EXTRA_FLAGS} -DGGML_PERF)
@@ -208,9 +248,13 @@ endif()
 
 add_library(${TARGET}
     ggml.c
+    ggml-alloc.c
     ../include/ggml/ggml.h
+    ../include/ggml/ggml-alloc.h
     ${GGML_CUDA_SOURCES}
-    ${GGML_OPENCL_SOURCES})
+    ${GGML_OPENCL_SOURCES}
+    ${GGML_METAL_SOURCES}
+    )
 
 target_include_directories(${TARGET} PUBLIC
     .
@@ -239,6 +283,10 @@ if (BUILD_SHARED_LIBS)
     target_compile_definitions(${TARGET} PRIVATE
         GGML_BUILD
         )
+
+    if (GGML_METAL)
+        set_target_properties(${TARGET} PROPERTIES RESOURCE "${CMAKE_CURRENT_SOURCE_DIR}/ggml-metal.metal")
+    endif()
 endif()
 
 target_compile_definitions(${TARGET} PUBLIC
@@ -253,12 +301,21 @@ endif()
 
 if (GGML_CUDA_SOURCES)
     message(STATUS "GGML CUDA sources found, configuring CUDA architecture")
-    set_property(TARGET ggml  PROPERTY CUDA_ARCHITECTURES OFF)
+    set_property(TARGET ggml  PROPERTY CUDA_ARCHITECTURES "52;61")
     set_property(TARGET ggml  PROPERTY CUDA_SELECT_NVCC_ARCH_FLAGS "Auto")
-    target_link_libraries(ggml PUBLIC stdc++)
+    if (NOT MSVC)
+        target_link_libraries(ggml PUBLIC stdc++)
+    endif()
 endif()
+
+set (GGML_PUBLIC_HEADERS
+     ${CMAKE_CURRENT_SOURCE_DIR}/../include/ggml/ggml.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/../include/ggml/ggml-alloc.h)
+set_target_properties(${TARGET} PROPERTIES
+                      PUBLIC_HEADER "${GGML_PUBLIC_HEADERS}")
 
 install(TARGETS ${TARGET}
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib/static
+    PUBLIC_HEADER DESTINATION include/ggml
     )

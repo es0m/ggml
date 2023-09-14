@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_DEPRECATE // Disables ridiculous "unsafe" warnigns on Windows
 #include "ggml/ggml.h"
 
 #include <math.h>
@@ -6,9 +7,13 @@
 #include <assert.h>
 #include <inttypes.h>
 
+#if defined(_MSC_VER)
+#pragma warning(disable: 4244 4267) // possible loss of data
+#endif
+
 #define MAX_NARGS 2
 
-float frand() {
+float frand(void) {
     return (float)rand()/(float)RAND_MAX;
 }
 
@@ -90,14 +95,15 @@ bool check_gradient(
         float eps,
         float max_error_abs,
         float max_error_rel) {
+    const int n_threads = 1;
 
     struct ggml_cgraph gf = ggml_build_forward (f);
     struct ggml_cgraph gb = ggml_build_backward(ctx0, &gf, false);
 
-    ggml_graph_compute(ctx0, &gf);
+    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
     ggml_graph_reset  (&gf);
     ggml_set_f32      (f->grad, 1.0f);
-    ggml_graph_compute(ctx0, &gb);
+    ggml_graph_compute_with_ctx(ctx0, &gb, n_threads);
 
     ggml_graph_dump_dot(&gf, NULL, "test-grad0-forward.dot");
     ggml_graph_dump_dot(&gb, &gf,  "test-grad0-backward.dot");
@@ -109,12 +115,12 @@ bool check_gradient(
             const float x0 = get_element(x[i], k);
 
             set_element(x[i], k, x0 + eps);
-            ggml_graph_compute(ctx0, &gf);
+            ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
 
             const float f0 = ggml_get_f32_1d(f, 0);
 
             set_element(x[i], k, x0 - eps);
-            ggml_graph_compute(ctx0, &gf);
+            ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
 
             const float f1 = ggml_get_f32_1d(f, 0);
 
@@ -125,7 +131,7 @@ bool check_gradient(
             // compute gradient using backward graph
             ggml_graph_reset  (&gf);
             ggml_set_f32      (f->grad, 1.0f);
-            ggml_graph_compute(ctx0, &gb);
+            ggml_graph_compute_with_ctx(ctx0, &gb, n_threads);
 
             const float g1 = get_element(x[i]->grad, k);
 
@@ -157,10 +163,6 @@ bool check_mat_mul(
         const struct ggml_tensor * y,
         const struct ggml_tensor * x0,
         const struct ggml_tensor * x1) {
-    float * dst  = (float *) y->data;
-    float * src0 = (float *) x0->data;
-    float * src1 = (float *) x1->data;
-
     const int64_t n00 = x0->ne[0];
     const int64_t n10 = x0->ne[1];
     const int64_t n20 = x0->ne[2];
@@ -242,6 +244,9 @@ int main(int argc, const char ** argv) {
     if (argc > 1) {
         niter = atoi(argv[1]);
     }
+
+    int n_threads = 1;
+
     for (int iter = 0; iter < niter; ++iter) {
         printf("test-mul-mat0: iter:%d/%d\n", iter, niter);
         struct ggml_context * ctx0 = ggml_init(params);
@@ -278,7 +283,7 @@ int main(int argc, const char ** argv) {
                     check_gradient("mul_mat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY);
                 } else {
                     struct ggml_cgraph gf = ggml_build_forward(m);
-                    ggml_graph_compute(ctx0, &gf);
+                    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
                 }
 
                 check_mat_mul(m, x[1], x[0]);
@@ -314,7 +319,7 @@ int main(int argc, const char ** argv) {
                     check_gradient("mul_mat", ctx0, x, f, ndims, nargs, 1e-3f, 1e-3f, INFINITY);
                 } else {
                     struct ggml_cgraph gf = ggml_build_forward(m);
-                    ggml_graph_compute(ctx0, &gf);
+                    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
                 }
 
                 check_mat_mul(m, x[1], x[0]);

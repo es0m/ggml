@@ -12,6 +12,11 @@
 #include <string>
 #include <vector>
 
+#if defined(_MSC_VER)
+#pragma warning(disable: 4244 4267) // possible loss of data
+#endif
+
+
 // default hparams (GPT-J 6B)
 struct gptj_hparams {
     int32_t n_vocab = 50400;
@@ -21,6 +26,7 @@ struct gptj_hparams {
     int32_t n_layer = 28;
     int32_t n_rot   = 64;
     int32_t ftype   = 1;
+    float   eps     = 1e-5f;
 };
 
 struct gptj_layer {
@@ -80,7 +86,7 @@ bool gptj_model_load(const std::string & fname, gptj_model & model, gpt_vocab & 
     {
         uint32_t magic;
         fin.read((char *) &magic, sizeof(magic));
-        if (magic != 0x67676d6c) {
+        if (magic != GGML_FILE_MAGIC) {
             fprintf(stderr, "%s: invalid model file '%s' (bad magic)\n", __func__, fname.c_str());
             return false;
         }
@@ -318,39 +324,39 @@ bool gptj_model_load(const std::string & fname, gptj_model & model, gpt_vocab & 
             std::string name(length, 0);
             fin.read(&name[0], length);
 
-            if (model.tensors.find(name.data()) == model.tensors.end()) {
-                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.data());
+            if (model.tensors.find(name) == model.tensors.end()) {
+                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.c_str());
                 return false;
             }
 
-            auto tensor = model.tensors[name.data()];
+            auto tensor = model.tensors[name];
             if (ggml_nelements(tensor) != nelements) {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
+                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.c_str());
                 return false;
             }
 
             if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1]) {
                 fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%d, %d], expected [%d, %d]\n",
-                        __func__, name.data(), (int) tensor->ne[0], (int) tensor->ne[1], ne[0], ne[1]);
+                        __func__, name.c_str(), (int) tensor->ne[0], (int) tensor->ne[1], ne[0], ne[1]);
                 return false;
             }
 
             // for debugging
             if (0) {
-                printf("%24s - [%5d, %5d], type = %6s, %6.2f MB, %9zu bytes\n", name.data(), ne[0], ne[1], ggml_type_name(ggml_type(ttype)), ggml_nbytes(tensor)/1024.0/1024.0, ggml_nbytes(tensor));
+                printf("%24s - [%5d, %5d], type = %6s, %6.2f MB, %9zu bytes\n", name.c_str(), ne[0], ne[1], ggml_type_name(ggml_type(ttype)), ggml_nbytes(tensor)/1024.0/1024.0, ggml_nbytes(tensor));
             }
 
             const size_t bpe = ggml_type_size(ggml_type(ttype));
 
             if ((nelements*bpe)/ggml_blck_size(tensor->type) != ggml_nbytes(tensor)) {
                 fprintf(stderr, "%s: tensor '%s' has wrong size in model file: got %zu, expected %zu\n",
-                        __func__, name.data(), ggml_nbytes(tensor), nelements*bpe);
+                        __func__, name.c_str(), ggml_nbytes(tensor), nelements*bpe);
                 return false;
             }
 
             fin.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            //printf("%42s - [%5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ttype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            //printf("%42s - [%5d, %5d], type = %6s, %6.2f MB\n", name.c_str(), ne[0], ne[1], ttype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
             total_size += ggml_nbytes(tensor);
             if (++n_tensors % 8 == 0) {
                 printf(".");
@@ -420,7 +426,6 @@ bool gptj_eval(
 
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph gf = {};
-    gf.n_threads = n_threads;
 
     struct ggml_tensor * embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
     memcpy(embd->data, embd_inp.data(), N*ggml_element_size(embd));
@@ -433,7 +438,7 @@ bool gptj_eval(
 
         // norm
         {
-            cur = ggml_norm(ctx0, inpL);
+            cur = ggml_norm(ctx0, inpL, hparams.eps);
 
             // cur = ln_1_g*cur + ln_1_b
             cur = ggml_add(ctx0,
@@ -447,8 +452,8 @@ bool gptj_eval(
 
         // self-attention
         {
-            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].c_attn_q_proj_w, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0);
-            struct ggml_tensor * Kcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].c_attn_k_proj_w, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0);
+            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].c_attn_q_proj_w, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0, 0);
+            struct ggml_tensor * Kcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].c_attn_k_proj_w, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0, 0);
 
             // store key and value to memory
             {
@@ -555,7 +560,7 @@ bool gptj_eval(
 
     // norm
     {
-        inpL = ggml_norm(ctx0, inpL);
+        inpL = ggml_norm(ctx0, inpL, hparams.eps);
 
         // inpL = ln_f_g*inpL + ln_f_b
         inpL = ggml_add(ctx0,
@@ -579,7 +584,7 @@ bool gptj_eval(
 
     // run the computation
     ggml_build_forward_expand(&gf, inpL);
-    ggml_graph_compute       (ctx0, &gf);
+    ggml_graph_compute_with_ctx(ctx0, &gf, n_threads);
 
     //if (n_past%100 == 0) {
     //    ggml_graph_print   (&gf);
@@ -666,7 +671,7 @@ int main(int argc, char ** argv) {
     size_t mem_per_token = 0;
     gptj_eval(model, params.n_threads, 0, { 0, 1, 2, 3 }, logits, mem_per_token);
 
-    for (int i = embd.size(); i < embd_inp.size() + params.n_predict; i++) {
+    for (size_t i = embd.size(); i < embd_inp.size() + params.n_predict; i++) {
         // predict
         if (embd.size() > 0) {
             const int64_t t_start_us = ggml_time_us();
@@ -704,9 +709,9 @@ int main(int argc, char ** argv) {
             embd.push_back(id);
         } else {
             // if here, it means we are still processing the input prompt
-            for (int k = i; k < embd_inp.size(); k++) {
+            for (size_t k = i; k < embd_inp.size(); k++) {
                 embd.push_back(embd_inp[k]);
-                if (embd.size() > params.n_batch) {
+                if (int32_t(embd.size()) > params.n_batch) {
                     break;
                 }
             }

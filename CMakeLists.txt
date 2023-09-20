@@ -13,6 +13,10 @@ else()
     set(GGML_STANDALONE OFF)
 endif()
 
+if (MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # options
 
 option(GGML_ALL_WARNINGS            "ggml: enable all compiler warnings"                   ON)
